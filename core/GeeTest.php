@@ -238,37 +238,7 @@ final class GeeTest
     public function scriptGeetestInComments()
     {
         if ((is_singular() && comments_open()) || $this->is_login_or_register()) {
-            wp_enqueue_script('jquery');
-            wp_enqueue_script('geetest', GEETEST_URL . '/assets/gt.js');
-            $script = <<<EOF
-<script>
-jQuery.post({
-    url: '/wp-admin/admin-ajax.php',
-    data: {
-        action: 'startCaptcha'
-    },
-    type: "post",
-    dataType: "json",
-    success: function (data) {
-        initGeetest({
-            gt: data.gt,
-            challenge: data.challenge,
-            offline: !data.success,
-            new_captcha: data.new_captcha,
-            product: "popup",
-            width: '100%'
-        }, function (captchaObj) {
-                captchaObj.onReady(function () {
-                    captchaObj.appendTo("#embed-captcha");
-                    document.getElementById('geetest-wait').style.display = 'none';
-                });
-            });
-    }
-});
-</script>
-EOF;
-
-            wp_add_inline_script('geetest', $script);
+            wp_enqueue_script('wp-geetest', GEETEST_URL . '/assets/gt.js');
         }
     }
 
