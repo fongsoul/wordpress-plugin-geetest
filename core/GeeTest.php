@@ -20,21 +20,57 @@ final class GeeTest
             try {
                 $this->geetest_lib = new $geetest_lib($this->geetest_options['ID'], $this->geetest_options['KEY']);
                 if ($this->geetest_lib instanceof GeetestLib) {
-                    session_start();
+                    if (!is_user_logged_in()) {
+                        $this->session_start();
 
-                    add_action('wp_ajax_nopriv_startCaptcha', array($this, 'startCaptcha'));
-                    add_action('wp_enqueue_scripts', array($this, 'scriptGeetestInComments'));
-                    add_action('login_enqueue_scripts', array($this, 'scriptGeetestInComments'));
-                    add_action('login_form', array($this, 'showGeetestInLogin'));
-                    add_action('register_form', array($this, 'showGeetestInLogin'));
+                        add_action('wp_ajax_nopriv_startCaptcha', array($this, 'startCaptcha'));
 
-                    add_filter('comment_form_defaults', array($this, 'addGeetestToCommentForm'));
-                    add_filter('preprocess_comment', array($this, 'validateGeetestComment'));
-                    add_filter('wp_authenticate_user', array($this, 'validateGeetestLogin'));
-                    add_filter('registration_errors', array($this, 'validateGeetestRegister'));
+                        $enable_in_login_form = $this->geetest_options['enable_geetset_in_login_form'];
+                        $enable_in_register_form = $this->geetest_options['enable_geetset_in_register_form'];
+                        $enable_in_lost_pass_form = $this->geetest_options['enable_geetset_in_lost_pass_form'];
+                        $enable_in_comment_form = $this->geetest_options['enable_geetset_in_comment_form'];
+
+                        if ($enable_in_login_form || $enable_in_register_form || $enable_in_lost_pass_form) {
+                            add_action('login_enqueue_scripts', array($this, 'scriptGeetestInComments'));
+                        }
+
+                        if ($enable_in_login_form) {
+                            add_action('login_form', array($this, 'showGeetest'));
+                            add_filter('wp_authenticate_user', array($this, 'validateGeetestLogin'));
+                        }
+
+                        if ($enable_in_register_form) {
+                            add_action('register_form', array($this, 'showGeetest'));
+                            add_filter('registration_errors', function (WP_ERROR $errors) {
+                                if (!$this->validate()) {
+                                    wp_shake_js();
+                                    $errors->add('invalid_captchas', '<strong>ERROR</strong>: 验证码未通过。');
+                                }
+
+                                return $errors;
+                            });
+                        }
+
+                        if ($enable_in_lost_pass_form) {
+                            add_action('lostpassword_form', array($this, 'showGeetest'));
+                            add_action('lostpassword_post', function (WP_ERROR $errors) {
+                                if (!$this->validate()) {
+                                    wp_shake_js();
+                                    $errors->add('invalid_captcha', '<strong>ERROR</strong>: 验证码未通过。');
+                                }
+                            });
+                        }
+
+                        if ($enable_in_comment_form) {
+                            add_action('wp_enqueue_scripts', array($this, 'scriptGeetestInComments'));
+                            add_filter('comment_form_defaults', array($this, 'addGeetestToCommentForm'));
+                            add_filter('preprocess_comment', array($this, 'validateGeetestComment'));
+                        }
+                    }
+
+                    add_filter('login_redirect', array($this, 'login_redirect'), 10, 3);
                 }
-            } catch (\Error $e) {
-            }
+            } catch (\Error $e) { }
         }
     }
 
@@ -138,6 +174,7 @@ final class GeeTest
             'ip_address' => '127.0.0.1',
         );
         $status = $this->geetest_lib->pre_process($data, 1);
+
         $_SESSION['gtserver'] = $status;
         die($this->geetest_lib->get_response_str());
     }
@@ -154,16 +191,15 @@ final class GeeTest
             return true;
         }
 
-        $challenge = $_POST['geetest_challenge'];
-        $validate = $_POST['geetest_validate'];
-        $seccode = $_POST['geetest_seccode'];
+        $challenge = esc_attr($_POST['geetest_challenge']);
+        $validate = esc_attr($_POST['geetest_validate']);
+        $seccode = esc_attr($_POST['geetest_seccode']);
 
         $data = array(
             'user_id' => 'test',
             'client_type' => 'web',
             'ip_address' => '127.0.0.1',
         );
-
         if (1 === $_SESSION['gtserver']) {
             if (!$this->geetest_lib->success_validate($challenge, $validate, $seccode, $data)) {
                 return false;
@@ -212,7 +248,7 @@ final class GeeTest
     /**
      * 添加GeeTest验证模块到登陆表单.
      */
-    public function showGeetestInLogin()
+    public function showGeetest()
     {
         echo '<style>.geetest_holder{margin-right: 6px; min-width: auto !important;}</style><div id="embed-captcha" style="margin-bottom: 16px;"><div id="geetest-wait" style="height: 42px; line-height: 42px;">验证码加载中....</div></div>';
     }
@@ -225,9 +261,7 @@ final class GeeTest
      */
     public function addGeetestToCommentForm($default)
     {
-        if (!is_user_logged_in()) {
-            $default['submit_field'] = '<div id="embed-captcha"><div id="geetest-wait" style="height: 42px; line-height: 42px;">验证码加载中....</div></div>' . $default['submit_field'];
-        }
+        $default['submit_field'] = '<div id="embed-captcha"><div id="geetest-wait" style="height: 42px; line-height: 42px;">验证码加载中....</div></div>' . $default['submit_field'];
 
         return $default;
     }
@@ -238,7 +272,10 @@ final class GeeTest
     public function scriptGeetestInComments()
     {
         if ((is_singular() && comments_open()) || $this->is_login_or_register()) {
-            wp_enqueue_script('wp-geetest', GEETEST_URL . '/assets/gt.js');
+            wp_enqueue_script('wp-geetest', GEETEST_URL . '/assets/gt.js', array(), null, true);
+            wp_localize_script('wp-geetest', 'geetest', array(
+                'api' => admin_url('admin-ajax.php')
+            ));
         }
     }
 
@@ -252,7 +289,33 @@ final class GeeTest
         return in_array($GLOBALS['pagenow'], array('wp-login.php', 'wp-register.php'));
     }
 
-    private function __clone()
+    public function login_redirect($redirect_to, $request, $user)
     {
+        if (is_user_logged_in()) {
+            exit(wp_redirect($redirect_to));
+        }
+
+        if (isset($user->roles) && is_array($user->roles)) {
+            if (in_array('administrator', $user->roles)) {
+                return $redirect_to;
+            } else {
+                return home_url();
+            }
+        } else {
+            return $redirect_to;
+        }
     }
+
+    /**
+     * 开启 SESSION
+     *
+     */
+    private function session_start()
+    {
+        session_cache_limiter('public');
+        session_start();
+    }
+
+    private function __clone()
+    { }
 }
